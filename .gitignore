@@ -1,0 +1,505 @@
+import mysql.connector
+import telebot
+import re
+import telebot.types
+import time
+import threading
+
+from telebot.types import Message
+from telebot.storage import StateMemoryStorage
+from telebot.handler_backends import State, StatesGroup
+from telebot import custom_filters
+
+from config import *
+from datetime import datetime, timedelta
+
+state_storage = StateMemoryStorage()
+
+# تعیین ساعات مجاز
+allowed_hours = (12, 22)  
+time_lock_active = False
+
+#دیکشنری ذخیره پیام خوش آمد
+welcome_messages = {}
+
+#ذخیره پیام های کاربران به پشتیبانی 
+chat_ids = []
+texts = {}
+
+
+
+
+
+
+bot = telebot.TeleBot(TOKEN ,state_storage=state_storage, parse_mode="HTML")
+
+
+################################################ use class
+class Support(StatesGroup):
+    text = State()
+    respond = State()
+    agahi = State()
+
+#####################################################
+# Function to escape all special characters with a backslash
+def escape_special_characters(text):
+    special_characters = r"([\*\_\[\]\(\)\~\`\>\#\+\-\=\|\{\}\.\!])"
+    return re.sub(special_characters, r'\\\1', text)
+
+###################################################### function
+
+def check_join(user_id, channel_id):
+
+    for i in channel_id:
+        try:
+            is_member = bot.get_chat_member(i , user_id)
+            if is_member.status in ["kicked", "left"]:
+                return False
+        except Exception as e:
+         
+            return False
+   
+    return True
+############################################################check and user
+def is_admin(chat_id, user_id):
+    admins = bot.get_chat_administrators(chat_id)
+    for admin in admins:
+        if admin.user.id == user_id:
+            return True
+    return False
+############################################################delet message  30s
+def delete_after_delay(message, delay=3):
+   
+    def delayed_delete():
+        time.sleep(delay)
+        bot.delete_message(message.chat.id, message.message_id)
+    
+    
+    threading.Thread(target=delayed_delete).start()
+#-------------------------------------------------------
+
+def user_balance(user):
+
+    sql = f"SELECT balance FROM users WHERE id={user}"
+
+    with  mysql.connector.connect(**datab_config) as connection:
+        with connection.cursor() as cursor :
+            cursor.execute(sql)
+            result =cursor.fetchone()
+
+    return result
+
+#######################################3###################
+
+# inline button جهت ثبت آگهی
+
+inline_button_1 = telebot.types.InlineKeyboardButton(
+    "ثبت آگهی", callback_data="register_ad_1")
+
+# inline button جهت برسی عضویت
+inline_button_2 = telebot.types.InlineKeyboardButton(
+    "عضویت در  کانال بات",  url="https://t.me/maneagebot" ,callback_data="register_ad_2") 
+
+# keyboara  button  خدمات بات
+inline_markup = telebot.types.InlineKeyboardMarkup().add(inline_button_1)
+
+inline_markup_join = telebot.types.InlineKeyboardMarkup().add(inline_button_2 )
+
+keyboard_about_bot = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True,
+                                                       row_width=2)
+keyboard_about_bot.add("ثبت آگهی  | 📝")
+keyboard_about_bot.add("شارژ حساب","حساب کاربری", "خدمات بات",
+                       "پشتیبانی بات", "زیر مجموعه گیری")
+
+
+#___________________________________________________________
+@bot.message_handler(content_types=['new_chat_members'])
+def welcome_new_members(message):
+    chat_id = message.chat.id
+    
+    welcome_message = welcome_messages.get(chat_id, "به گروه {gname} خوش آمدید، {name}!")
+    
+    for new_member in message.new_chat_members:
+        firstname_new = new_member.first_name
+        welcom_text = welcome_message.format(name=firstname_new, gname=message.chat.title)
+        bot.send_message(chat_id, text=welcom_text)
+#_____________________________________________________________
+@bot.message_handler(content_types=['new_chat_members', 'left_chat_member'])
+def delete_join_leave_messages(message):
+
+    bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+#____________________________________________________________command start
+
+@bot.message_handler(commands=['start'])
+def start(message):
+
+    with mysql.connector.connect(**datab_config) as connection :
+        with connection.cursor() as cursor:
+            sql = f"SELECT LANGUEG FROM users WHERE id = {message.from_user.id}"
+            cursor.execute(sql)
+            result = cursor.fetchone()
+
+            if result is None:
+
+                sql = f"INSERT INTO users(id,LANGUEG) VALUES({message.from_user.id} , 'per')"
+                cursor.execute(sql)
+                connection.commit()
+                
+                markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+                button = telebot.types.InlineKeyboardButton("English ", callback_data='eng')
+                button_1 = telebot.types.InlineKeyboardButton("فارسی ", callback_data='per')
+                markup.add(button,button_1)
+                bot.send_message(message.chat.id , "کاربر گرامی  لطفا زبان خود را انتخاب کنید :" , reply_markup = markup )
+            else:
+                if result[0] == 'per':
+                    bot.send_message(message.chat.id , "به ربات ما خوش آمدید", reply_markup=keyboard_about_bot)
+                else:
+                    bot.send_message(message.chat.id , " welcome to my bot" , reply_markup=keyboard_about_bot )
+                    
+
+@bot.callback_query_handler (func=lambda  call: call.data == 'eng')
+def english(call):
+    with  mysql.connector.connect(**datab_config) as connection:
+        with connection.cursor() as cursor :
+            sql = f"UPDATE users SET LANGUEG = 'eng' WHERE id = {call.from_user.id}"
+            cursor.execute(sql)
+            connection.commit()
+
+    bot.send_message(call.message.chat.id ,"Your language is now English" , reply_markup=keyboard_about_bot)
+
+@bot.callback_query_handler (func=lambda  call: call.data == 'per')   
+def persian(call):
+    with  mysql.connector.connect(**datab_config) as connection:
+        with connection.cursor() as cursor :
+            sql = f"UPDATE users SET LANGUEG = 'per' WHERE id = {call.from_user.id}"
+            cursor.execute(sql)
+            connection.commit()
+
+    bot.send_message(call.message.chat.id , text="زبان شما فارسی است ."  , reply_markup=keyboard_about_bot)
+
+
+#_____________________________________________________________command help
+
+@bot.message_handler(commands=['help'])
+def commands_bot(message):
+        if message.text == '/help':
+            help_text = "help text"
+            bot.reply_to(message,help_text)
+
+@bot.message_handler(commands=['setwelcome'])
+def set_welcome_message(message):
+    if is_admin(chat_id= message.chat.id , user_id=message.from_user.id):
+            chat_id = message.chat.id
+            new_welcome_message = ' '.join(message.text.split()[1:]) 
+            if new_welcome_message:
+                welcome_messages[chat_id] = new_welcome_message
+                sent_message = bot.reply_to(message , "پیام خوش آمدگویی جدید ذخیره شد." )
+                delete_after_delay(sent_message)
+                
+            else:
+                bot.send_message(chat_id, "/setwelcome [پیام]")
+               
+    else:
+        sent_message = bot.send_message(chat_id , ".شما ادمین نیستید دسترسی لازم را ندارید.")
+        delete_after_delay(sent_message)
+
+  
+
+####################################################################################
+
+#__________________________________________________________pin message
+@bot.message_handler(func=lambda m: m.text == "پین")
+def pin(message):
+    if is_admin(message.chat.id, message.from_user.id):
+        # پین کردن پیام
+        bot.pin_chat_message(message.chat.id, message.reply_to_message.id)
+
+        sent_message = bot.reply_to(message, "پیام مورد نظر پین شد")
+        delete_after_delay(sent_message)
+
+    else:
+        sent_message = bot.reply_to(message, "شما ادمین نیستید و اجازه انجام این کار را ندارید.")
+        delete_after_delay(sent_message)
+
+#______________________________________________________انتخاب ادمین
+
+@bot.message_handler(func=lambda  m : m.text =="ادمین") 
+def promote (m) :
+    if is_admin(m.chat.id, m.from_user.id):
+        bot.promote_chat_member(
+            m.chat.id,
+            m.reply_to_message.json['from']['id'],
+            can_change_info=True,
+            can_delete_messages=True,
+            can_edit_messages=True,
+            can_invite_users=True,
+            can_manage_chat=True,
+            can_manage_topics=False,
+            can_manage_video_chats=True,
+            can_manage_voice_chats=True,
+            can_pin_messages=True,
+            can_post_messages=True,
+            can_promote_members=True,
+            can_restrict_members=True
+    )
+        sent_message = bot.send_message(m.chat.id ,
+         f"کاربر {m.reply_to_message.json['from']['first_name']} به عنوان ادمین انتخاب شد.")
+        delete_after_delay(sent_message)
+
+    else:
+        sent_message = bot.reply_to(m, "شما ادمین نیستید و اجازه انجام این کار را ندارید.")
+        delete_after_delay(sent_message)
+
+#_____________________________________________________حذف ادمین
+
+@bot.message_handler(func=lambda  m : m.text =="حذف ادمین") 
+def DEpromote (m) :
+    if is_admin(m.chat.id, m.from_user.id):
+        bot.promote_chat_member(
+            m.chat.id,
+            m.reply_to_message.json['from']['id'],
+            can_change_info=False,
+            can_delete_messages=False,
+            can_edit_messages=False,
+            can_invite_users=      False,
+            can_manage_chat=       False,
+            can_manage_topics=     False,
+            can_manage_video_chats=False,
+            can_manage_voice_chats=False,
+            can_pin_messages=      False,
+            can_post_messages=     False,
+            can_promote_members=   False,
+            can_restrict_members=  False,    
+        )
+        sent_message = bot.send_message(m.chat.id ,
+         f"کاربر {m.reply_to_message.json['from']['first_name']} به عنوان کاربر ساده انتخاب شد.")
+        delete_after_delay(sent_message)
+    else:
+        sent_message = bot.reply_to(m, "شما ادمین نیستید و اجازه انجام این کار را ندارید.")
+        delete_after_delay(sent_message)
+
+#______________________________________________________بن کاربر
+
+@bot.message_handler(func= lambda  m: m.text == 'بن')
+def ban(m):
+    if is_admin(m.chat.id, m.from_user.id):
+        bot.ban_chat_member(m.chat.id, m.reply_to_message.from_user.id ,revoke_messages=True , until_date= 30) 
+        sent_message = bot.reply_to(m , f"کاربر {m.reply_to_message.json['from']['first_name']} بن شد")
+        delete_after_delay(sent_message) 
+    else:
+        sent_message = bot.reply_to(m, "شما ادمین نیستید و اجازه انجام این کار را ندارید.")
+        delete_after_delay(sent_message)    
+#_____________________________________________________حذف بن
+
+@bot.message_handler(func= lambda  m: m.text == 'حذف بن')
+def unban(m):
+    if is_admin(m.chat.id, m.from_user.id):
+        bot.unban_chat_member(m.chat.id, m.reply_to_message.from_user.id ) 
+        sent_message = bot.reply_to(m , f"کاربر {m.reply_to_message.json['from']['first_name']} حذف بن شد")
+        delete_after_delay(sent_message) 
+    else:
+        sent_message = bot.reply_to(m, "شما ادمین نیستید و اجازه انجام این کار را ندارید.")
+        delete_after_delay(sent_message) 
+
+#____________________________________________________سکوت کاربر
+
+@bot.message_handler(func= lambda  m: m.text == 'سکوت')
+def restrict(m):
+    if is_admin(m.chat.id, m.from_user.id):
+        bot.restrict_chat_member(m.chat.id, m.reply_to_message.from_user.id ,
+                                    can_add_web_page_previews=False,
+                                    can_change_info=False,
+                                    can_invite_users=False,
+                                    can_pin_messages=False,
+                                    can_send_messages=False,
+                                    can_send_other_messages=False,
+                                    can_send_media_messages=False,
+                                    can_send_polls=False ) 
+        sent_message = bot.reply_to(m , f"کاربر {m.reply_to_message.json['from']['first_name']} اجازه ارسال پیام ندارد")
+        delete_after_delay(sent_message) 
+    else:
+        sent_message = bot.reply_to(m, "شما ادمین نیستید و اجازه انجام این کار را ندارید.")
+        delete_after_delay(sent_message) 
+
+#___________________________________________________حذف سکوت کاربر
+@bot.message_handler(func= lambda  m: m.text == 'حذف سکوت')
+def restrict(m):
+    if is_admin(m.chat.id, m.from_user.id):
+        bot.restrict_chat_member(m.chat.id, m.reply_to_message.from_user.id,
+                                    can_add_web_page_previews=True,
+                                    can_change_info=True,
+                                    can_invite_users=True,
+                                    can_pin_messages=True,
+                                    can_send_messages=True,
+                                    can_send_other_messages=True,
+                                    can_send_media_messages=True,
+                                    can_send_polls=True ) 
+
+        sent_message = bot.reply_to(m , f"کاربر {m.reply_to_message.json['from']['first_name']}  اجازه ارسال پیام را دارید")  
+        delete_after_delay(sent_message)
+    else:
+        sent_message = bot.reply_to(m, "شما ادمین نیستید و اجازه انجام این کار را ندارید.")
+        delete_after_delay(sent_message)
+
+#_____________________________________________________ نمایش لیست ادمین ها
+@bot.message_handler(commands=['admin' , 'ادمین'])
+def get_admin(m):
+    admin_list = bot.get_chat_administrators(m.chat.id)
+    for i in admin_list:
+        if i.user.is_bot: state_admin=" ادمین بات"
+        else: state_admin=""
+        bot.send_message(m.chat.id , f"""{state_admin }  {i.user.first_name}:  
+        <code>{i.user.id}</code>""")
+
+#_______________________________________________________ اسپم پیام های غیر مجاز
+@bot.message_handler(func=lambda message: 
+                     (re.search(r'https?://.*', message.text) or  # لینک‌ها
+                      message.forward_date or  # فوروارد پیام‌ها
+                      re.search(r'\b(تبلیغ|ربات|اسپم)\b', message.text, re.IGNORECASE)))  # محتوای اسپم
+def delete_inappropriate_message(message):
+    bot.delete_message(message.chat.id, message.message_id)
+    sent_message = bot.send_message(message.chat.id, "پیام شما به دلیل نقض قوانین حذف شد.")
+    delete_after_delay(sent_message)
+#________________________________________________________محدودیت زمان چت  
+@bot.message_handler(commands=['settime_chat'])
+def setTime_chat(m):
+    global time_lock_active  
+    time_lock_active = True 
+    pin_notif = bot.send_message(m.chat.id ,  "قفل گروه فعال شد بازه زمانی چت مجاز در گروه از ساعت 8 تا 22 میباشد.")
+    bot.pin_chat_message(m.chat.id,pin_notif.message_id)
+#_______________________________________________________حذف محدودیت زمانی چت  
+@bot.message_handler(commands=['deltime_chat'])
+def detime_chat(m):
+    global time_lock_active 
+    time_lock_active = False  
+    sent_message = bot.send_message(m.chat.id ,  "قفل گروه غیر فعال شد .")
+    delete_after_delay(sent_message)
+#__________________________________________________________  اعمال محدویت چت
+@bot.message_handler(func=lambda message:time_lock_active and
+                     not is_admin(message.chat.id, message.from_user.id) 
+                     and not allowed_hours[0] <= datetime.now().hour < allowed_hours[1] )
+def time_limited_message(message):
+    bot.delete_message(message.chat.id, message.message_id)
+    sent_message = bot.send_message(message.chat.id, "چت کردن در این ساعت مجاز نیست. لطفاً در ساعت‌های مشخص‌ شده فعالیت کنید.")
+    delete_after_delay(sent_message)
+
+#___________________________________________________________ ضد جوین
+@bot.message_handler(content_types=['new_chat_members'])
+def prevent_unauthorized_joins(message):
+    for new_member in message.new_chat_members:
+        if new_member.is_bot or new_member.username is None:
+            bot.kick_chat_member(message.chat.id, new_member.id)
+            sent_message = bot.send_message(message.chat.id, f"کاربر {new_member.first_name} اجازه دسترسی به گروه ندارد و حذف شد.")
+            delete_after_delay(sent_message)
+
+
+
+######################################################################  suport bot
+@bot.message_handler(func= lambda m: m.text== "پشتیبانی بات")
+def sup(m: Message):
+    bot.send_message(chat_id=m.chat.id, text="پیام خور را اینجا بنویسید و ارسال کنید")
+    bot.set_state(user_id=m.from_user.id, state=Support.text, chat_id=m.chat.id)
+
+@bot.message_handler(state=Support.text)
+def sup_text(message):
+
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(telebot.types.InlineKeyboardButton(text="پاسخ", callback_data= message.from_user.id))
+
+    bot.send_message(chat_id=6610660565, text=f"یک پیام از کاربر دریافت شد <code>{message.from_user.id}</code> با ایدی @{message.from_user.username}:\n\nمتن پیام:\n<b>{escape_special_characters(message.text)}</b>", reply_markup=markup ,parse_mode="HTML")
+
+    bot.send_message(chat_id=message.chat.id, text="پیام شما به پشتیبانی ارسال شد.")
+
+    texts[message.from_user.id] = message.text
+
+    bot.delete_state(user_id=message.from_user.id, chat_id=message.chat.id)
+
+@bot.message_handler(state=Support.respond)
+def answer_text(message):
+    chat_id = chat_ids[-1]
+    if chat_id in texts:
+        bot.send_message(chat_id=chat_id, text=f"پیام شما:\n<i>{escape_special_characters(texts[chat_id])}</i>\n\nپاسخ پشتیبانی بات:\n<b>{escape_special_characters(message.text)}</b>", parse_mode="HTML")
+        bot.send_message(chat_id=message.chat.id, text="پیام شما ارسال شد")
+        del texts[chat_id]
+        chat_ids.remove(chat_id)
+    else:
+        bot.send_message(chat_id=message.chat.id, text="اشتباهی رخ داد .لطفا کمی بعد دوباره تلاش کنید...")
+    bot.delete_state(user_id=message.from_user.id, chat_id=message.chat.id) 
+
+#####################################################################
+
+@bot.message_handler(func=lambda message: message.text == "زیر مجموعه گیری")
+def get_subgroups(message):
+     with open('chat-with-sava.png', 'rb') as photo:
+         bot.send_photo(chat_id=message.chat.id, photo=photo ,caption=f"""  لینک رفرال شما :
+         https://t.me/Gmanag_bot?start={message.from_user.id}""")
+
+
+#####################################################################
+# handler keyboards bot
+@bot.message_handler()
+def keyboard(message):
+    balance = user_balance(message.from_user.id)
+    if message.text == "خدمات بات":
+            bot.reply_to(
+            message,
+            f"""برای استفاده از بات ابتدا ان را به گروه خود اضافه کنید 
+            ویژگی های  بات 
+            1. اتصال به پشتیبان 
+            2.مدیریت گروه
+            3.اتصال به درگاه پرداخت
+            4. دریافت  کد رفال
+            5.امکان انتخاب زبان مورد نظر"""
+        )
+
+    elif message.text == "حساب کاربری":
+
+        bot.send_message(message.chat.id,f""" اطلاعات حساب کاربری شما📊
+        👤نام کاربری: <a href='tg://user?id={message.from_user.id}'>{message.from_user.first_name}</a>
+        🎫شناسه کاربری: <code>{message.from_user.id}</code>
+        💳موجودی :{balance[0]} موجودی""", parse_mode="HTML" )
+
+    elif message.text == "شارژ حساب":
+        bot.send_message(message.chat.id, "لیست کامل دستورات بات:\n")
+    elif message.text == "ثبت آگهی  | 📝" and not check_join(message.from_user.id, channel_id) :  
+        bot.send_message(message.chat.id, "برای ثبت آگهی ابتدا باید در کانال زیر عضو شوید.    \nو مجددا دکمه ثبت آگهی را انتخاب کنید :)", reply_markup=inline_markup_join)
+    
+    elif message.text == "ثبت آگهی  | 📝" and  check_join(message.from_user.id, channel_id) : 
+  
+        bot.send_message(message.chat.id, "لطفا آگهی خود را برای ما بفرستید ", reply_markup=inline_markup)
+        bot.set_state(user_id=message.from_user.id , state=Support.agahi, chat_id=message.chat.id)
+
+
+#____________________________________________________
+
+    
+# # callback handler for checking membership and ad registration
+@bot.callback_query_handler(func=lambda call: call.data == 'register_ad_2')
+async def callback_inline(call):
+    
+    
+    bot.send_message(call.message.chat.id, "برای استفاده از این ویژگی باید در کانال زیر عضو شوید.", reply_markup=inline_markup_join)
+
+    # بررسی وضعیت عضویت کاربر با استفاده از تابع غیرهمزمان
+    is_member = check_join(call.from_user.id, channel_id)
+    
+    if not is_member:
+        bot.send_message(call.message.chat.id, "برای استفاده از این ویژگی باید در کانال عضو شوید.", reply_markup=inline_markup_join)
+    else:
+        bot.send_message(call.message.chat.id, "عضویت در  کانال بات با موفقیت انجام شد.")
+        bot.reply_to(call.message, "لطفاً گزینه‌ای را برای ثبت آگهی انتخاب کنید:", reply_markup=inline_markup)
+
+
+
+###################################################################################### callback glo
+@bot.callback_query_handler(func= lambda call: True)
+def answer(call):
+    bot.send_message(chat_id=call.message.chat.id, text=f"پشتیبان گرامی پاسخ خود را برای کاربر ارسال کنید <code>{call.data}</code>:", parse_mode="HTML")
+    chat_ids.append(int(call.data))
+    bot.set_state(user_id=call.from_user.id, state=Support.respond, chat_id=call.message.chat.id)
+
+if __name__ == '__main__':
+
+    bot.add_custom_filter(custom_filters.StateFilter(bot))
+    bot.infinity_polling()
+    
